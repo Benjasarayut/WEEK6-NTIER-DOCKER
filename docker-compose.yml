@@ -1,0 +1,81 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: taskboard-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-taskboard_db}
+      POSTGRES_USER: ${POSTGRES_USER:-taskboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taskboard123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-taskboard} -d ${POSTGRES_DB:-taskboard_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - taskboard-network
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: taskboard-api
+    restart: unless-stopped
+    ports:                  # 🟢 1. เพิ่ม 2 บรรทัดนี้เข้าไป (พิมพ์ให้ตรงย่อหน้าแบบนี้นะครับ)
+      - "3000:3000"         
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - PORT=${PORT:-3000}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-taskboard_db}
+      - DB_USER=${DB_USER:-taskboard}
+      - DB_PASSWORD=${DB_PASSWORD:-taskboard123}
+      - CORS_ORIGIN=* #
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - taskboard-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: taskboard-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - taskboard-network
+
+networks:
+  taskboard-network:
+    driver: bridge
+    name: taskboard-network
+
+volumes:
+  postgres_data:
+    name: taskboard-postgres-data
